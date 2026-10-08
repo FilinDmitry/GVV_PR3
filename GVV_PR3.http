@@ -1,0 +1,6 @@
+@GVV_PR3_HostAddress = http://localhost:5078
+
+GET {{GVV_PR3_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
