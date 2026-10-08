@@ -1,3 +1,4 @@
+using GVV_PR3;
 using GVV_PR3.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OAuth;
@@ -5,9 +6,12 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using GVV_PR3;
+using System.Text.Json.Serialization;
 var builder = WebApplication.CreateBuilder(args);
-
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+});
 var hasher = new PasswordHasher<User>();
 var validation = new TokenValidationParameters
 {
