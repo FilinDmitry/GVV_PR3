@@ -3,6 +3,7 @@ using GVV_PR3.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OAuth;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -51,9 +52,9 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapPost("/auth", (PR3_Context context, AuthRequest request) =>
+app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
 {
-    User? user = context.Users.FirstOrDefault(
+    User? user = await context.Users.FirstOrDefaultAsync(
         i => i.Login == request.Login);
 
     if (user == null || string.IsNullOrWhiteSpace(request.Password))
