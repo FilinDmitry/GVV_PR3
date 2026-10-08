@@ -1,32 +1,117 @@
+using GVV_PR3;
+using GVV_PR3.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.OAuth;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text.Json.Serialization;
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+});
+var hasher = new PasswordHasher<User>();
+var validation = new TokenValidationParameters
+{
+    ValidateIssuer = true,
+    ValidIssuer = AuthOptions.ISSUER,
 
-// Add services to the container.
+    ValidateAudience = true,
+    ValidAudience = AuthOptions.AUDIENCE,
+
+    ValidateIssuerSigningKey = true,
+    IssuerSigningKey = AuthOptions.GetSymmetricSecurityKey(),
+
+    ValidateLifetime = true,
+    ClockSkew = TimeSpan.Zero,
+
+    NameClaimType = "name",
+    RoleClaimType = "role"
+};
+
+builder.Services.AddDbContext<PR3_Context>();
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = validation;
+    });
+
+builder.Services.AddAuthorization();
+
+
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+app.UseAuthentication();
+app.UseAuthorization();
 
-app.MapGet("/weatherforecast", () =>
+app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
 {
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-});
+    User? user = await context.Users.FirstOrDefaultAsync(
+        i => i.Login == request.Login);
+
+    if (user == null || string.IsNullOrWhiteSpace(request.Password))
+        return Results.Challenge();
+
+    var result = hasher.VerifyHashedPassword(
+        user, user.PasswordHash, request.Password);
+
+    if (result == PasswordVerificationResult.Failed)
+        return Results.Challenge();
+
+    return Results.Ok(new
+    {
+        access_token = CreateToken(user),
+        token_type = "Bearer"
+    });
+}).AllowAnonymous();
+
+/*app.MapGet("/hash", (RC_SkladContext context) =>
+   {
+       foreach (var user in context.Users.ToList())
+       {
+           user.Password = hasher.HashPassword(user, user.Password);
+       }
+       
+       context.SaveChanges();
+       return Results.Ok(new
+       {
+           access_token = CreateToken(context.Users.Include(u => u.IdtypeNavigation).First(i => i.Id == 1)),
+           token_type = "Bearer"
+       });
+   }).AllowAnonymous();*/ //один раз захешировать тестовые данные и удалить
 
 app.Run();
 
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
+string CreateToken(User user)
 {
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+
+    var claims = new[]
+    {
+
+        new Claim("sub", user.Id.ToString()),
+        new Claim("name", user.Login),
+        new Claim("role", user.Role.Name)
+    };
+
+    var token = new JwtSecurityToken(
+        issuer: AuthOptions.ISSUER,
+        audience: AuthOptions.AUDIENCE,
+        claims: claims,
+        expires: DateTime.UtcNow.AddDays(1),
+        signingCredentials: new SigningCredentials(
+            AuthOptions.GetSymmetricSecurityKey(),
+            SecurityAlgorithms.HmacSha256
+            ));
+
+    return new JwtSecurityTokenHandler().WriteToken(token);
 }
+
+public record AuthRequest(string Login, string Password);
