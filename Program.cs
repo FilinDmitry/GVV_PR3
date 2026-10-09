@@ -88,7 +88,7 @@ app.MapPost("/api/users", async (PR3_Context context, List<Clothe> clothe) => {
     context.Clothes.Add(clothe);
     await context.SaveChangesAsync();
     return Results.Created($"/api/clothes/{clothe.Id}", clothe);
-});
+}); 
 /*app.MapGet("/hash", (RC_SkladContext context) =>
    {
        foreach (var user in context.Users.ToList())
