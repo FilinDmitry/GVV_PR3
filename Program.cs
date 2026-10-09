@@ -73,6 +73,22 @@ app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
     });
 }).AllowAnonymous();
 
+app.MapGet("/api/clothes", (PR3_Context context) => Results.Json(context.Clothes));
+app.MapGet("/api/users/{text}", (PR3_Context context, string text) =>
+{
+    List<Clothe> clothes = context.Clothes.Where(u => u.Name.Contains(text)).ToList();
+    return Results.Json(clothes);
+});
+app.MapPost("/api/users", async (PR3_Context context, List<Clothe> clothe) => {
+    foreach (Clothe clo in clothe)
+    {
+        context.Clothes.Add(clothe);
+        await context.SaveChangesAsync();
+    }
+    context.Clothes.Add(clothe);
+    await context.SaveChangesAsync();
+    return Results.Created($"/api/clothes/{clothe.Id}", clothe);
+});
 /*app.MapGet("/hash", (RC_SkladContext context) =>
    {
        foreach (var user in context.Users.ToList())
