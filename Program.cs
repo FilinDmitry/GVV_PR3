@@ -27,7 +27,7 @@ var validation = new TokenValidationParameters
 
     ValidateLifetime = true,
     ClockSkew = TimeSpan.Zero,
-
+     
     NameClaimType = "name",
     RoleClaimType = "role"
 };
