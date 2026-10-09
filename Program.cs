@@ -2,12 +2,17 @@ using GVV_PR3;
 using GVV_PR3.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OAuth;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion.Internal;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
+using static System.Net.Mime.MediaTypeNames;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -74,21 +79,84 @@ app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
 }).AllowAnonymous();
 
 app.MapGet("/api/clothes", (PR3_Context context) => Results.Json(context.Clothes));
-app.MapGet("/api/users/{text}", (PR3_Context context, string text) =>
+app.MapGet("/api/clothes/search", async (PR3_Context context, [FromQuery] string text) =>
 {
-    List<Clothe> clothes = context.Clothes.Where(u => u.Name.Contains(text)).ToList();
-    return Results.Json(clothes);
-});
-app.MapPost("/api/users", async (PR3_Context context, List<Clothe> clothe) => {
-    foreach (Clothe clo in clothe)
+    if (string.IsNullOrWhiteSpace(text))
     {
-        context.Clothes.Add(clothe);
-        await context.SaveChangesAsync();
+        return Results.BadRequest(new { Message = "Поисковый запрос не должен быть пустым" });
     }
-    context.Clothes.Add(clothe);
+    var clothes = await context.Clothes.Where(u => u.Name.Contains(text)).ToListAsync();
+    return Results.Ok(clothes);
+});
+app.MapPost("/api/neworder", async (ClaimsPrincipal user, PR3_Context context, List<TovarOrder> tovarOrders) =>
+{
+    var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value??user.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userIdClaim))
+    {
+        return Results.Unauthorized();
+    }
+    if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
+    {
+        return Results.Unauthorized();
+    }
+    if (tovarOrders == null)
+    {
+        return Results.BadRequest(new { Message = "Список товаров не может быть пустым" });
+    }
+    Order newOrder = new Order()
+    {
+        CreatedAt = DateTime.Now,
+        Status = 1,
+        UserId = userId
+    };
+    context.Orders.Add(newOrder);
     await context.SaveChangesAsync();
-    return Results.Created($"/api/clothes/{clothe.Id}", clothe);
-}); 
+    foreach (TovarOrder to in tovarOrders)
+    {
+        to.OrderId = newOrder.Id; 
+        context.TovarOrders.Add(to);
+    }
+    await context.SaveChangesAsync(); 
+    return Results.Ok(new { Message = "Заказ успешно создан", OrderId = newOrder.Id });
+}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
+app.MapPost("/api/orders/status", async (ClaimsPrincipal user, PR3_Context context, int status ) =>
+{
+    var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userIdClaim))
+    {
+        return Results.Unauthorized();
+    }
+    if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
+    {
+        return Results.Unauthorized();
+    }
+    if (status > 0 && status < 4)
+    {
+        return Results.BadRequest(new { Message = "Статус товара не найден!" });
+    }
+    else
+    {
+        var orders = await context.Orders.Include(o => o.TovarOrders).ThenInclude(to => to.TovarId).Where(u => u.UserId == userId && u.Status == status).ToListAsync();
+        var result = new List<OrderAndProducts>();
+        foreach (var o in orders)
+        {
+            var clothesList = new List<ProductsForOrder>();
+            foreach (var to in o.TovarOrders)
+            {
+                if (to.Tovar != null)
+                {
+                    ProductsForOrder productsForOrder = new ProductsForOrder(
+                        to.Tovar.ClothesNavigation.Name,
+                        to.Tovar.Size
+                    );
+                    clothesList.Add(productsForOrder);
+                }
+            }
+            result.Add(new OrderAndProducts(o, clothesList));
+        }
+        return Results.Ok(result);
+    }
+}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
 /*app.MapGet("/hash", (RC_SkladContext context) =>
    {
        foreach (var user in context.Users.ToList())
@@ -103,7 +171,6 @@ app.MapPost("/api/users", async (PR3_Context context, List<Clothe> clothe) => {
            token_type = "Bearer"
        });
    }).AllowAnonymous();*/ //один раз захешировать тестовые данные и удалить
-
 app.Run();
 
 string CreateToken(User user)
@@ -131,3 +198,6 @@ string CreateToken(User user)
 }
 
 public record AuthRequest(string Login, string Password);
+public record OrderAndProducts(Order Or, List<ProductsForOrder> Products);
+public record ProductsForOrder(string ClotheName, int Size);
+
