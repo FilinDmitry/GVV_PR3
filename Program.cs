@@ -120,7 +120,7 @@ app.MapPost("/api/neworder", async (ClaimsPrincipal user, PR3_Context context, L
     await context.SaveChangesAsync(); 
     return Results.Ok(new { Message = "Заказ успешно создан", OrderId = newOrder.Id });
 }).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
-app.MapPost("/api/orders/status", async (ClaimsPrincipal user, PR3_Context context, int status ) =>
+app.MapPost("/api/orders/status", async (ClaimsPrincipal user, PR3_Context context, int status) =>
 {
     var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst("sub")?.Value;
     if (string.IsNullOrEmpty(userIdClaim))
@@ -207,7 +207,53 @@ app.MapPatch("/api/orders/{id}", async (ClaimsPrincipal user, PR3_Context contex
     await context.SaveChangesAsync();
     return Results.Ok();
 }).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
+app.MapPatch("/api/tovar/{id}/changeAmount", async (ClaimsPrincipal user, PR3_Context context, int id, Int_request request) =>
+{
+    Tovar? tovar = await context.Tovars.FirstOrDefaultAsync(o => o.Id == id);
+    if (tovar == null)
+    {
+        return Results.NotFound();
+    }
+    if (request.num < 0)
+    {
+        return Results.BadRequest(new { Message = "Введено некорректное количество" });
+    }
+    tovar.AmountAvailiable = request.num;
+    await context.SaveChangesAsync();
+    return Results.Ok();
+}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
+app.MapPatch("/api/clothes/{id}/stop", async (ClaimsPrincipal user, PR3_Context context, int id) =>
+{
+    Clothe? clothes = await context.Clothes.FirstOrDefaultAsync(o => o.Id == id);
+    if (clothes == null)
+    {
+        return Results.NotFound();
+    }
+    if (!clothes.IsAvailiable)
+    {
+        return Results.Ok(new { Message = "товар уже недоступен" });
+    }
+    clothes.IsAvailiable = false;
+    await context.SaveChangesAsync();
+    return Results.Ok();
+}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
+app.MapPatch("/api/clothes/{id}/start", async (ClaimsPrincipal user, PR3_Context context, int id) =>
+{
+    Clothe? clothes = await context.Clothes.FirstOrDefaultAsync(o => o.Id == id);
+    if (clothes == null)
+    {
+        return Results.NotFound();
+    }
+    if (clothes.IsAvailiable)
+    {
+        return Results.Ok(new { Message = "товар уже достпупен к покупке" });
+    }
+    clothes.IsAvailiable = true;
+    await context.SaveChangesAsync();
+    return Results.Ok();
+}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
 app.Run();
+
 
 string CreateToken(User user)
 {
