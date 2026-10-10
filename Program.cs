@@ -59,7 +59,7 @@ app.UseAuthorization();
 
 app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
 {
-    User? user = await context.Users.FirstOrDefaultAsync(
+    User? user = await context.Users.Include(i => i.Role).FirstOrDefaultAsync(
         i => i.Login == request.Login);
 
     if (user == null || string.IsNullOrWhiteSpace(request.Password))
