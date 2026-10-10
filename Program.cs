@@ -115,3 +115,5 @@ string CreateToken(User user)
 }
 
 public record AuthRequest(string Login, string Password);
+public record OrderAndProducts(Order Or, List<ProductsForOrder> Products);
+public record ProductsForOrder(string ClotheName, int Size);
