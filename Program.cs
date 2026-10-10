@@ -157,20 +157,40 @@ app.MapPost("/api/orders/status", async (ClaimsPrincipal user, PR3_Context conte
         return Results.Ok(result);
     }
 }).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
-/*app.MapGet("/hash", (RC_SkladContext context) =>
+/*app.MapGet("/hash", (PR3_Context context) =>
    {
        foreach (var user in context.Users.ToList())
        {
-           user.Password = hasher.HashPassword(user, user.Password);
+           user.PasswordHash = hasher.HashPassword(user, user.PasswordHash);
        }
        
        context.SaveChanges();
        return Results.Ok(new
        {
-           access_token = CreateToken(context.Users.Include(u => u.IdtypeNavigation).First(i => i.Id == 1)),
+           access_token = CreateToken(context.Users.First(i => i.Id == 1)),
            token_type = "Bearer"
        });
    }).AllowAnonymous();*/ //один раз захешировать тестовые данные и удалить
+
+app.MapPost("/api/regestration", async (ClaimsPrincipal user, PR3_Context context, Request_newUser request) =>
+{
+    User? user_db = await context.Users.FirstOrDefaultAsync(U => U.Login == request.Login);
+    if (user_db != null)
+    {
+        return Results.Conflict(new { Message = "Пользователь с таким логином уже существует" });
+    }
+    User create_user = new User {
+        Adress = request.Adress,
+        Login = request.Login,
+        PasswordHash = request.Password,
+        Phone = request.Phone,
+        RoleId = 1
+    };
+    create_user.PasswordHash = hasher.HashPassword(create_user, request.Password);
+    await context.Users.AddAsync(create_user);
+    context.SaveChanges();
+    return Results.Created($"/api/users/{create_user.Id}", create_user);
+}).AllowAnonymous();
 app.Run();
 
 string CreateToken(User user)
@@ -200,4 +220,4 @@ string CreateToken(User user)
 public record AuthRequest(string Login, string Password);
 public record OrderAndProducts(Order Or, List<ProductsForOrder> Products);
 public record ProductsForOrder(string ClotheName, int Size);
-
+public record Request_newUser(string Adress, string Login, string Password, string Phone);
