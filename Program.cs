@@ -222,6 +222,7 @@ app.MapPatch("/api/orders/{id}", async (ClaimsPrincipal user, PR3_Context contex
 }).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
 app.Run();
 
+
 string CreateToken(User user)
 {
 
