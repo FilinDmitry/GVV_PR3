@@ -143,10 +143,11 @@ app.MapGet("/api/orders/status/{status:int}", async (ClaimsPrincipal user, PR3_C
         return Results.Unauthorized();
 
     var orders = await context.Orders.AsNoTracking().Include(o => o.TovarOrders).ThenInclude(to => to.Tovar).ThenInclude(t => t.ClothesNavigation).Where(o => o.UserId == userId && o.Status == status).ToListAsync();
-    var result = orders.Select(o => new OrderAndProducts(
-        o,
-        o.TovarOrders.Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null).Select(to => new ProductsForOrder(to.Tovar.ClothesNavigation.Name, to.Tovar.Size)).ToList())).ToList();
-    return Results.Ok(result);
+    var result = orders.Select(o => new {
+        order = new OrderDisplay(o.Id, o.CreatedAt, o.StatusNavigation.Name),
+        Tovary = o.TovarOrders.Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null).Select(to => new ProductsForOrder(to.Tovar.ClothesNavigation.Name, to.Tovar.Size)).ToList()
+    }).ToList();
+    return Results.Ok(new { Res = result });
 }).RequireAuthorization();
 app.MapGet("/api/orders/customer/{customerId:int}", async (ClaimsPrincipal user, PR3_Context context, int customerId) =>
 {
@@ -158,15 +159,16 @@ app.MapGet("/api/orders/customer/{customerId:int}", async (ClaimsPrincipal user,
         return Results.Forbid();
     var orders = await context.Orders.AsNoTracking().Include(o => o.TovarOrders).ThenInclude(to => to.Tovar).ThenInclude(t => t.ClothesNavigation).Where(o => o.UserId == customerId).ToListAsync();
 
-    var result = orders.Select(o => new OrderAndProducts(
-        o,
-        o.TovarOrders
+    var result = orders.Select(o => new
+    {
+        order = new OrderDisplay(o.Id, o.CreatedAt, o.StatusNavigation.Name),
+        Tovary = o.TovarOrders
             .Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null)
             .Select(to => new ProductsForOrder(
                 to.Tovar.ClothesNavigation.Name,
                 to.Tovar.Size))
             .ToList()
-    )).ToList();
+    }).ToList();
 
     return Results.Ok(result);
 }).RequireAuthorization();
@@ -249,7 +251,7 @@ string CreateToken(User user)
 
 public record AuthRequest(string Login, string Password);
 public record NewOrderItem(int TovarId, int Quantity);
-public record OrderAndProducts(Order Or, List<ProductsForOrder> Products);
+public record OrderDisplay(int Id, DateTime createdAt, string Status);
 public record ProductsForOrder(string ClotheName, int Size);
 public record LookClothe(string Name, string Description, string type, int amount);
 public record Request_newUser(string Adress, string Login, string Password, string Phone);
