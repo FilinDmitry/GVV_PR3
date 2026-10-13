@@ -147,7 +147,7 @@ app.MapGet("/api/orders/status/{status:int}", async (ClaimsPrincipal user, PR3_C
         order = new OrderDisplay(o.Id, o.CreatedAt, o.StatusNavigation.Name),
         Tovary = o.TovarOrders.Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null).Select(to => new ProductsForOrder(to.Tovar.ClothesNavigation.Name, to.Tovar.Size)).ToList()
     }).ToList();
-    return Results.Ok(new { Res = result });
+    return Results.Ok(result);
 }).RequireAuthorization();
 app.MapGet("/api/orders/customer/{customerId:int}", async (ClaimsPrincipal user, PR3_Context context, int customerId) =>
 {
