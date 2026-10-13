@@ -33,12 +33,12 @@ var validation = new TokenValidationParameters
 
     ValidateLifetime = true,
     ClockSkew = TimeSpan.Zero,
-     
+
     NameClaimType = "name",
     RoleClaimType = "role"
 };
 
-builder.Services.AddDbContext<PR3_Context>();
+builder.Services.AddDbContext<PR3_Context>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -79,85 +79,97 @@ app.MapPost("/auth", async (PR3_Context context, AuthRequest request) =>
     });
 }).AllowAnonymous();
 
-app.MapGet("/api/clothes", (PR3_Context context) => Results.Json(context.Clothes));
-app.MapGet("/api/clothes/search", async (PR3_Context context, [FromQuery] string text) =>
+app.MapGet("/api/clothes", async (PR3_Context context, [FromQuery] string? text) =>
 {
-    if (string.IsNullOrWhiteSpace(text))
+    var query = context.Clothes.AsNoTracking();
+
+    if (!string.IsNullOrWhiteSpace(text))
     {
-        return Results.BadRequest(new { Message = "Поисковый запрос не должен быть пустым" });
+        query = query.Where(c => c.Name.Contains(text));
     }
-    var clothes = await context.Clothes.Where(u => u.Name.Contains(text)).ToListAsync();
+
+    var clothes = await query.Select(c => new LookClothe(c.Name, c.Description, c.TypeNavigation != null ? c.TypeNavigation.Name : "Без типа", c.PurchaseAmount)).ToListAsync();
+
     return Results.Ok(clothes);
 });
-app.MapPost("/api/neworder", async (ClaimsPrincipal user, PR3_Context context, List<TovarOrder> tovarOrders) =>
+app.MapPost("/api/neworder", async (ClaimsPrincipal user, PR3_Context context, List<NewOrderItem> tovarOrders) =>
 {
-    var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value??user.FindFirst("sub")?.Value;
-    if (string.IsNullOrEmpty(userIdClaim))
-    {
+    var userIdClaim = user.FindFirst("sub")?.Value;
+
+    if (!int.TryParse(userIdClaim, out int userId))
         return Results.Unauthorized();
-    }
-    if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
-    {
-        return Results.Unauthorized();
-    }
-    if (tovarOrders == null)
-    {
+
+    if (tovarOrders == null || tovarOrders.Count == 0)
         return Results.BadRequest(new { Message = "Список товаров не может быть пустым" });
-    }
-    Order newOrder = new Order()
+
+    if (tovarOrders.Any(x => x.Quantity <= 0))
+        return Results.BadRequest(new { Message = "Количество должно быть больше 0" });
+
+    var newOrder = new Order
     {
-        CreatedAt = DateTime.Now,
+        CreatedAt = DateTime.UtcNow,
         Status = 1,
         UserId = userId
     };
+
     context.Orders.Add(newOrder);
-    await context.SaveChangesAsync();
-    foreach (TovarOrder to in tovarOrders)
+
+    foreach (var item in tovarOrders)
     {
-        to.OrderId = newOrder.Id; 
-        context.TovarOrders.Add(to);
-    }
-    await context.SaveChangesAsync(); 
-    return Results.Ok(new { Message = "Заказ успешно создан", OrderId = newOrder.Id });
-}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
-app.MapPost("/api/orders/status", async (ClaimsPrincipal user, PR3_Context context, int status) =>
-{
-    var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst("sub")?.Value;
-    if (string.IsNullOrEmpty(userIdClaim))
-    {
-        return Results.Unauthorized();
-    }
-    if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
-    {
-        return Results.Unauthorized();
-    }
-    if (status > 0 && status < 4)
-    {
-        return Results.BadRequest(new { Message = "Статус товара не найден!" });
-    }
-    else
-    {
-        var orders = await context.Orders.Include(o => o.TovarOrders).ThenInclude(to => to.TovarId).Where(u => u.UserId == userId && u.Status == status).ToListAsync();
-        var result = new List<OrderAndProducts>();
-        foreach (var o in orders)
+        context.TovarOrders.Add(new TovarOrder
         {
-            var clothesList = new List<ProductsForOrder>();
-            foreach (var to in o.TovarOrders)
-            {
-                if (to.Tovar != null)
-                {
-                    ProductsForOrder productsForOrder = new ProductsForOrder(
-                        to.Tovar.ClothesNavigation.Name,
-                        to.Tovar.Size
-                    );
-                    clothesList.Add(productsForOrder);
-                }
-            }
-            result.Add(new OrderAndProducts(o, clothesList));
-        }
-        return Results.Ok(result);
+            Order = newOrder,
+            TovarId = item.TovarId,
+            Amount = item.Quantity
+        });
     }
-}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("user"));
+
+    await context.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        Message = "Заказ успешно создан",
+        OrderId = newOrder.Id
+    });
+}).RequireAuthorization();
+app.MapGet("/api/orders/status/{status:int}", async (ClaimsPrincipal user, PR3_Context context, int status) =>
+{
+    if (status < 1 || status > 3)
+        return Results.BadRequest(new { Message = "Статус заказа не найден!" });
+
+    var userIdClaim = user.FindFirst("sub")?.Value;
+
+    if (!int.TryParse(userIdClaim, out int userId))
+        return Results.Unauthorized();
+
+    var orders = await context.Orders.AsNoTracking().Include(o => o.TovarOrders).ThenInclude(to => to.Tovar).ThenInclude(t => t.ClothesNavigation).Where(o => o.UserId == userId && o.Status == status).ToListAsync();
+    var result = orders.Select(o => new OrderAndProducts(
+        o,
+        o.TovarOrders.Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null).Select(to => new ProductsForOrder(to.Tovar.ClothesNavigation.Name, to.Tovar.Size)).ToList())).ToList();
+    return Results.Ok(result);
+}).RequireAuthorization();
+app.MapGet("/api/orders/customer/{customerId:int}", async (ClaimsPrincipal user, PR3_Context context, int customerId) =>
+{
+    var userIdClaim = user.FindFirst("sub")?.Value;
+
+    if (!int.TryParse(userIdClaim, out int currentUserId))
+        return Results.Unauthorized();
+    if (!user.IsInRole("manager") && currentUserId != customerId)
+        return Results.Forbid();
+    var orders = await context.Orders.AsNoTracking().Include(o => o.TovarOrders).ThenInclude(to => to.Tovar).ThenInclude(t => t.ClothesNavigation).Where(o => o.UserId == customerId).ToListAsync();
+
+    var result = orders.Select(o => new OrderAndProducts(
+        o,
+        o.TovarOrders
+            .Where(to => to.Tovar != null && to.Tovar.ClothesNavigation != null)
+            .Select(to => new ProductsForOrder(
+                to.Tovar.ClothesNavigation.Name,
+                to.Tovar.Size))
+            .ToList()
+    )).ToList();
+
+    return Results.Ok(result);
+}).RequireAuthorization();
 /*app.MapGet("/hash", (PR3_Context context) =>
    {
        foreach (var user in context.Users.ToList())
@@ -180,7 +192,8 @@ app.MapPost("/api/regestration", async (PR3_Context context, Request_newUser req
     {
         return Results.Conflict(new { Message = "Пользователь с таким логином уже существует" });
     }
-    User create_user = new User {
+    User create_user = new User
+    {
         Adress = request.Adress,
         Login = request.Login,
         PasswordHash = request.Password,
@@ -201,54 +214,9 @@ app.MapPatch("/api/orders/{id}", async (ClaimsPrincipal user, PR3_Context contex
     }
     if (request.num < 0 || request.num > 3)
     {
-        return Results.BadRequest(new {Message = "Введен ID статуса за пределами списка"});
+        return Results.BadRequest(new { Message = "Введен ID статуса за пределами списка" });
     }
     order.Status = request.num;
-    await context.SaveChangesAsync();
-    return Results.Ok();
-}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
-app.MapPatch("/api/tovar/{id}/changeAmount", async (ClaimsPrincipal user, PR3_Context context, int id, Int_request request) =>
-{
-    Tovar? tovar = await context.Tovars.FirstOrDefaultAsync(o => o.Id == id);
-    if (tovar == null)
-    {
-        return Results.NotFound();
-    }
-    if (request.num < 0)
-    {
-        return Results.BadRequest(new { Message = "Введено некорректное количество" });
-    }
-    tovar.AmountAvailiable = request.num;
-    await context.SaveChangesAsync();
-    return Results.Ok();
-}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
-app.MapPatch("/api/clothes/{id}/stop", async (ClaimsPrincipal user, PR3_Context context, int id) =>
-{
-    Clothe? clothes = await context.Clothes.FirstOrDefaultAsync(o => o.Id == id);
-    if (clothes == null)
-    {
-        return Results.NotFound();
-    }
-    if (!clothes.IsAvailiable)
-    {
-        return Results.Ok(new { Message = "товар уже недоступен" });
-    }
-    clothes.IsAvailiable = false;
-    await context.SaveChangesAsync();
-    return Results.Ok();
-}).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
-app.MapPatch("/api/clothes/{id}/start", async (ClaimsPrincipal user, PR3_Context context, int id) =>
-{
-    Clothe? clothes = await context.Clothes.FirstOrDefaultAsync(o => o.Id == id);
-    if (clothes == null)
-    {
-        return Results.NotFound();
-    }
-    if (clothes.IsAvailiable)
-    {
-        return Results.Ok(new { Message = "товар уже достпупен к покупке" });
-    }
-    clothes.IsAvailiable = true;
     await context.SaveChangesAsync();
     return Results.Ok();
 }).RequireAuthorization(policy => policy.RequireAuthenticatedUser().RequireRole("manager"));
@@ -280,7 +248,9 @@ string CreateToken(User user)
 }
 
 public record AuthRequest(string Login, string Password);
+public record NewOrderItem(int TovarId, int Quantity);
 public record OrderAndProducts(Order Or, List<ProductsForOrder> Products);
 public record ProductsForOrder(string ClotheName, int Size);
+public record LookClothe(string Name, string Description, string type, int amount);
 public record Request_newUser(string Adress, string Login, string Password, string Phone);
 public record Int_request(int num);
